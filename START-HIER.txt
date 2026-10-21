@@ -1,0 +1,25 @@
+YAVIS - SO LÄDST DU ES HOCH (ca. 5 Minuten)
+
+1) ALTE WORKFLOWS LÖSCHEN (damit nur die neue Datei läuft)
+   GitHub-Repository öffnen -> Ordner ".github" -> "workflows".
+   Jede dort liegende Datei öffnen -> oben rechts Papierkorb-Symbol -> "Commit changes".
+
+2) ALTE DATEIEN ENTFERNEN (optional, aber sauberer)
+   Löschen geht pro Datei/Ordner ebenso. Alternativ einfach beim Hochladen überschreiben lassen.
+
+3) HOCHLADEN
+   Diese ZIP entpacken. In den entpackten Ordner "YAVIS" gehen.
+   Im Repository: "Add file" -> "Upload files".
+   ALLES AUS DEM ORDNER (nicht den Ordner YAVIS selbst) in das Fenster ziehen:
+     .github, assets, installer, tests, tools, yavis, main.py, requirements.txt, README.md, .gitignore
+   Der Ordner ".github" ist versteckt: im Windows-Explorer oben auf Ansicht -> Anzeigen -> "Ausgeblendete Elemente" klicken.
+   Unten auf "Commit changes" klicken.
+
+4) BUILD STARTEN
+   Reiter "Actions". Der Lauf startet automatisch. Falls nicht: links "Build YAVIS-Setup.exe" -> "Run workflow".
+   Dauer ca. 15-25 Minuten. Grüner Haken = fertig.
+
+5) EXE HOLEN
+   Auf den Lauf klicken -> ganz unten "Artifacts" -> "YAVIS-Setup" herunterladen -> entpacken -> YAVIS-Setup.exe starten.
+
+Wird der Lauf rot: Screenshot des roten Schritts schicken.
