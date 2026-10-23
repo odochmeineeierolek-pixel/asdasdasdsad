@@ -1,0 +1,21 @@
+YAVIS – Änderungen an der bereitgestellten Projektkopie
+
+- Neuere UI und fehlendes yavis/mining.py in das tatsächlich von main.py importierte yavis/-Paket synchronisiert.
+- „Verkauf“ ist ein eigener Punkt in der linken Navigation statt eines Tabs innerhalb von „Tools“.
+- Crypto-Seite: Live-Marktdaten aus CoinGecko (Top 100 nach Marktkapitalisierung) und virtuelles Paper-Trading. Keine Echtgeld-Orders.
+- Bitcoin-Wallet: optionale Nur-Lese-Ansicht für eine vom Benutzer eingetragene öffentliche BTC-Adresse, Guthaben und bis zu zehn letzte Transaktionen via Blockstream API. Keine Seed-Phrase, keine Private Keys, keine echten Transfers. Keine direkte Green-Wallet-Verbindung.
+- Mining: NVIDIA-Telemetrie über nvidia-smi, Stromkostenrechnung und manuelles Starten einer bereits installierten Miner-EXE nach Bestätigung. Kein Miner-Download und keine automatische Installation.
+- START-YAVIS.bat ergänzt, um auf Windows die Abhängigkeiten zu installieren und die App zu starten.
+
+Tests:
+- tests/test_core.py: bestanden
+- test_mining.py: bestanden
+- Python-Syntaxprüfung: bestanden
+- GUI-Selbsttest hier nicht ausführbar, weil PySide6 in der Prüfungsumgebung nicht installiert ist.
+
+
+Zusätzliche Aktualisierung:
+- Bitcoin-Wallet-Leseansicht in der Crypto-Seite: öffentliche Adresse, bestätigtes und
+  unbestätigtes BTC-Guthaben sowie bis zu 10 aktuelle Transaktionen via Blockstream.
+- Keine Seed-Phrase/Private Keys; keine Signierung oder Übermittlung von Transaktionen.
+- Wallet-Test ergänzt und in GitHub Actions aufgenommen.

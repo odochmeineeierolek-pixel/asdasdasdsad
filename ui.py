@@ -67,7 +67,7 @@ QScrollArea{border:none}
 STATUS_TEXT = {"idle": "Bereit – sag „YAVIS“", "listening": "Ich höre zu …", "thinking": "Ich denke nach …",
                "speaking": "", "muted": "Mikrofon aus", "loading": "Lade Spracherkennung …", "error": "Fehler – siehe Verlauf"}
 NAV = [("Home", "🏠"), ("Chat", "💬"), ("Projekte", "📁"), ("Dateien", "📄"), ("Wissen", "📖"), ("Tools", "🛠"),
-       ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Crypto AI Trading", "₿"), ("Mining", "⛏")]
+       ("Verkauf", "💶"), ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Crypto AI Trading", "₿"), ("Mining", "⛏")]
 
 
 def build_style(t, fs):
@@ -229,6 +229,9 @@ class Bridge(QObject):
     crypto_data = Signal(object)
     crypto_error = Signal(str)
     crypto_done = Signal()
+    wallet_data = Signal(object)
+    wallet_error = Signal(str)
+    wallet_done = Signal()
 
 
 class UiHooks(Hooks):
@@ -550,6 +553,9 @@ class MainWindow(QMainWindow):
         self.b.crypto_data.connect(self._crypto_render)
         self.b.crypto_error.connect(lambda t: self.crypto_status.setText("Fehler: " + t))
         self.b.crypto_done.connect(lambda: self.crypto_refresh_btn.setEnabled(True))
+        self.b.wallet_data.connect(self._wallet_render)
+        self.b.wallet_error.connect(lambda t: self.wallet_status.setText("Wallet-Fehler: " + t))
+        self.b.wallet_done.connect(lambda: self.wallet_refresh_btn.setEnabled(True))
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -564,7 +570,7 @@ class MainWindow(QMainWindow):
         right.addWidget(self.stack, 1)
         root.addLayout(right, 1)
         for fn in (self.page_home, self.page_chat, self.page_projects, self.page_files, self.page_knowledge,
-                   self.page_tools, self.page_macros, self.page_settings, self.page_crypto, self.page_mining):
+                   self.page_tools, self.page_sales, self.page_macros, self.page_settings, self.page_crypto, self.page_mining):
             self.stack.addWidget(fn())
         self.nav_buttons[0].setChecked(True)
         self.apply_theme()
@@ -805,7 +811,6 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.ptree)
         tabs.addTab(pw, "Programme")
         tabs.addTab(self._tab_music(), "Musik")
-        tabs.addTab(self._tab_sales(), "Verkauf")
         return tabs
 
     def _tab_music(self):
@@ -828,6 +833,10 @@ class MainWindow(QMainWindow):
         if self.s.get("music_folder"):
             self._reload_tracks()
         return w
+
+    def page_sales(self):
+        """Eigenständiger Verkauf-Bereich in der linken Navigation."""
+        return self._tab_sales()
 
     def _tab_sales(self):
         w = QWidget()
@@ -1040,6 +1049,25 @@ class MainWindow(QMainWindow):
         self.crypto_log.setPlaceholderText("Deine simulierten Trades erscheinen hier.")
         self.crypto_log.setMaximumHeight(140)
         v.addWidget(self.crypto_log)
+
+        wallet_box, wallet_layout = panel("Bitcoin-Wallet · Nur-Lese-Ansicht")
+        wallet_layout.addWidget(lab("Öffentliche BTC-Adresse eingeben. Niemals Seed-Phrase oder Private Key einfügen.", "muted", True))
+        wallet_row = QHBoxLayout()
+        self.wallet_address = QLineEdit()
+        self.wallet_address.setPlaceholderText("Bitcoin-Adresse (bc1…, 1… oder 3…)")
+        wallet_row.addWidget(self.wallet_address, 1)
+        self.wallet_refresh_btn = btn("Guthaben & Transaktionen laden", self._wallet_lookup)
+        wallet_row.addWidget(self.wallet_refresh_btn)
+        wallet_layout.addLayout(wallet_row)
+        self.wallet_status = lab("Es werden nur öffentliche Blockchain-Daten abgefragt; keine Transaktionen werden gesendet.", "muted", True)
+        wallet_layout.addWidget(self.wallet_status)
+        self.wallet_transactions = QPlainTextEdit()
+        self.wallet_transactions.setReadOnly(True)
+        self.wallet_transactions.setMaximumHeight(120)
+        self.wallet_transactions.setPlaceholderText("Letzte Transaktionen erscheinen hier.")
+        wallet_layout.addWidget(self.wallet_transactions)
+        v.addWidget(wallet_box)
+
         self._crypto_prices = []
         self._crypto_paper = self.s.get("crypto_paper") or {"eur": 1000.0, "holdings": {}, "log": []}
         self._crypto_update_paper_labels()
@@ -1120,6 +1148,37 @@ class MainWindow(QMainWindow):
         self.crypto_log.setPlainText("\n".join(reversed(self._crypto_paper["log"])))
         self._crypto_update_paper_labels()
         self.crypto_status.setText("Nur Simulation – keine echte Transaktion wurde ausgeführt.")
+
+    def _wallet_lookup(self):
+        address = self.wallet_address.text().strip()
+        if not address:
+            self.wallet_status.setText("Bitte eine öffentliche Bitcoin-Adresse eingeben.")
+            return
+        self.wallet_refresh_btn.setEnabled(False)
+        self.wallet_status.setText("Lade öffentliche Blockchain-Daten von Blockstream …")
+        def fetch_wallet():
+            try:
+                from .wallet import lookup_address, format_tx
+                result = lookup_address(address)
+                result["transaction_lines"] = [format_tx(tx) for tx in result["transactions"]]
+                self.b.wallet_data.emit(result)
+            except Exception as ex:
+                self.b.wallet_error.emit(str(ex)[:220])
+            finally:
+                self.b.status.emit("Wallet-Abfrage beendet.")
+                self.b.wallet_done.emit()
+        threading.Thread(target=fetch_wallet, daemon=True).start()
+
+    def _wallet_render(self, result):
+        btc = float(result.get("balance_btc", 0))
+        confirmed = int(result.get("confirmed_sats", 0)) / 100_000_000
+        unconfirmed = int(result.get("unconfirmed_sats", 0)) / 100_000_000
+        self.wallet_status.setText(
+            f"Guthaben: {btc:.8f} BTC · bestätigt: {confirmed:.8f} BTC · unbestätigt: {unconfirmed:+.8f} BTC"
+        )
+        lines = result.get("transaction_lines") or ["Keine Transaktionen gefunden."]
+        self.wallet_transactions.setPlainText("\\n".join(lines))
+        self.wallet_refresh_btn.setEnabled(True)
 
     def _crypto_update_paper_labels(self):
         if hasattr(self, "crypto_balance"):
