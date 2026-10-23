@@ -1,0 +1,83 @@
+name: Build YAVIS-Setup.exe
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Projektstruktur prüfen und ggf. reparieren
+        shell: pwsh
+        run: |
+          if (!(Test-Path yavis\ui.py)) {
+            $m = Get-ChildItem -Recurse -Filter ui.py | Where-Object { $_.Directory.Name -eq "yavis" } | Select-Object -First 1
+            if (-not $m) { throw "yavis\ui.py wurde im Repository nicht gefunden - Ordner yavis nicht hochgeladen?" }
+            $src = $m.Directory.Parent.FullName
+            Write-Host "Projekt liegt in $src - kopiere ins Hauptverzeichnis"
+            Copy-Item "$src\*" -Destination . -Recurse -Force
+          }
+          Set-Content -Path yavis\__init__.py -Value '__version__ = "1.0.0"'
+          Write-Host "Dateien in yavis:"
+          Get-ChildItem yavis | Select-Object -ExpandProperty Name
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Tests
+        run: python tests/test_core.py
+
+      - name: Icon erzeugen
+        run: python tools/make_icon.py
+
+      - name: Programm bauen (PyInstaller)
+        run: >
+          pyinstaller main.py --name YAVIS --noconsole --noconfirm --icon assets/yavis.ico
+          --paths . --collect-submodules yavis
+          --hidden-import yavis.ui --hidden-import yavis.assistant --hidden-import yavis.skills
+          --hidden-import yavis.voices --hidden-import yavis.stt --hidden-import yavis.brain
+          --hidden-import yavis.music --hidden-import yavis.memory --hidden-import yavis.programs
+          --hidden-import yavis.config --hidden-import yavis.wake --hidden-import yavis.mci
+          --hidden-import winreg --hidden-import sqlite3 --hidden-import difflib --hidden-import webbrowser
+          --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all onnxruntime
+          --collect-all sounddevice --collect-all _sounddevice_data --collect-all edge_tts
+          --collect-all pyttsx3 --collect-all ddgs --collect-all primp
+          --hidden-import pyttsx3.drivers --hidden-import pyttsx3.drivers.sapi5 --hidden-import win32com
+          --hidden-import comtypes --hidden-import pyperclip
+
+      - name: Selbsttest der fertigen EXE
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "dist\YAVIS\YAVIS.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "dist\YAVIS\selftest.txt"
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen" }
+
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\yavis.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YAVIS-Setup
+          path: installer/Output/YAVIS-Setup.exe
+
+      - name: Release (nur bei Tag v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/YAVIS-Setup.exe

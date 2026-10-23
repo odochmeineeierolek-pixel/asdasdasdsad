@@ -1,6 +1,6 @@
 # YAVIS – persönlicher, lokaler KI-Assistent für Windows 11
 
-Kostenlos: lokales Modell (Ollama), lokale Spracherkennung (faster-whisper), Stimmen über Edge-TTS (gratis, Internet)
+Kostenlos: lokales Modell (LM Studio), lokale Spracherkennung (faster-whisper), Stimmen über Edge-TTS (gratis, Internet)
 oder Windows-Offline-Stimme. Keine API-Schlüssel, keine Abos.
 
 ## EXE erzeugen (nur GitHub, kein Test von dir nötig)
@@ -11,7 +11,8 @@ oder Windows-Offline-Stimme. Keine API-Schlüssel, keine Abos.
 
 ## Erster Start
 - Windows SmartScreen warnt bei unsignierten Programmen: „Weitere Informationen → Trotzdem ausführen“.
-- YAVIS fragt, ob **Ollama** installiert und das Modell (~2 GB) geladen werden soll – einmalig, mit Klick.
+- Beim ersten Start versucht YAVIS auf Windows, **LM Studio automatisch über WinGet** im Hintergrund zu installieren, falls es noch fehlt. Dafür sind Internetzugang und `winget` erforderlich. Falls WinGet fehlt, öffnet YAVIS die offizielle Downloadseite.
+- Nach der Installation öffnet YAVIS LM Studio. Lade dort einmalig ein lokales Modell herunter und starte den lokalen Server (standardmäßig Port 1234). In YAVIS unter Einstellungen die passende Modell-ID eintragen. Der Modell-Download erfolgt nicht automatisch, da Modellgröße und Hardwarebedarf stark variieren.
 - Beim ersten Hören lädt Whisper sein Modell (~460 MB, einmalig, Internet nötig).
 - Danach: „**YAVIS**, öffne YouTube“, „YAVIS, spiel Musik“, „YAVIS, was ist 12 mal 7“ …
 
@@ -23,6 +24,7 @@ Aufgaben, Rechner, Wetter, Witze, Münze/Würfel/Zufall, Screenshot, Lautstärke
 (mit Bestätigung), Dateisuche, Ordner öffnen, Zwischenablage, Übersetzen, Tagesplan u. v. m.
 
 ## Ehrliche Grenzen
+- Crypto AI Trading enthält Live-Kursabfrage und Paper-Trading; echte Orders sind nicht aktiviert.
 - Kein „automatisches Geldverdienen“: YAVIS bereitet Texte/Preisrecherche vor; Veröffentlichen, Kaufen, Bezahlen, Senden machst du selbst.
 - „Lernen“ = gemerkte Fakten + Feedback-Lektionen im Prompt; kein Selbstumprogrammieren.
 - Stimmen sind 16 Grundstimmen × Stile (Tempo/Tonhöhe), keine 56 völlig verschiedenen Sprecher. Edge-TTS ist ein inoffizieller Gratisdienst und kann sich ändern.
