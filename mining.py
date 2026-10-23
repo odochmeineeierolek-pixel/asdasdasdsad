@@ -39,6 +39,32 @@ def estimate_economics(power_w: float, electricity_eur_kwh: float,
     }
 
 
+def build_peakminer_arguments(coin: str, wallet: str, worker: str = "yavis-rig1", pool: str | None = None) -> list[str]:
+    """Build safe PeakMiner arguments for a supported coin and public wallet address.
+
+    This never accepts a seed phrase/private key. Pearl is the recommended default for
+    RTX 20xx+ cards; Quantus is also available for NVIDIA and supported AMD GPUs.
+    """
+    coins = {
+        "Pearl (PRL)": ("pearl", "de.pearl.herominers.com:1200", "prl1"),
+        "Quantus (QUAN)": ("quantus", "qtc.kryptex.network:7049", "qz"),
+    }
+    if coin not in coins:
+        raise ValueError("Nicht unterstützte PeakMiner-Coin-Auswahl.")
+    coin_arg, default_pool, prefix = coins[coin]
+    wallet = str(wallet).strip()
+    worker = str(worker).strip()
+    pool = str(pool or default_pool).strip()
+    if not wallet.startswith(prefix) or len(wallet) < 20 or any(ch.isspace() for ch in wallet):
+        raise ValueError(f"Bitte eine gültige öffentliche {coin} Empfangsadresse eingeben.")
+    if not worker or len(worker) > 32 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in worker):
+        raise ValueError("Workername darf nur Buchstaben, Zahlen, Bindestrich und Unterstrich enthalten.")
+    if not pool or any(ch.isspace() for ch in pool) or "/" in pool or "\\" in pool:
+        raise ValueError("Pool-Adresse ist ungültig.")
+    return ["--coin", coin_arg, "--url", pool, "--user", f"{wallet}.{worker}",
+            "--gpu-temp-stop", "80", "--gpu-temp-start", "70", "--api-port", "4068"]
+
+
 def read_nvidia_metrics() -> dict:
     """Read GPU telemetry from NVIDIA's nvidia-smi, if installed and available."""
     command = ["nvidia-smi", "--query-gpu=name,temperature.gpu,power.draw,power.limit,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]

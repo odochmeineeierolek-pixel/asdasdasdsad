@@ -9,8 +9,8 @@ import tempfile
 import threading
 import urllib.request
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal, QUrl
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox,
                                QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from . import programs, voices
 from .assistant import Assistant, Hooks
 from .config import home_dir
-from .mining import MinerController, estimate_economics, read_nvidia_metrics
+from .mining import MinerController, estimate_economics, read_nvidia_metrics, build_peakminer_arguments
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -67,7 +67,7 @@ QScrollArea{border:none}
 STATUS_TEXT = {"idle": "Bereit – sag „YAVIS“", "listening": "Ich höre zu …", "thinking": "Ich denke nach …",
                "speaking": "", "muted": "Mikrofon aus", "loading": "Lade Spracherkennung …", "error": "Fehler – siehe Verlauf"}
 NAV = [("Home", "🏠"), ("Chat", "💬"), ("Projekte", "📁"), ("Dateien", "📄"), ("Wissen", "📖"), ("Tools", "🛠"),
-       ("Verkauf", "💶"), ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Crypto AI Trading", "₿"), ("Mining", "⛏")]
+       ("Verkauf", "💶"), ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Krypto", "₿")]
 
 
 def build_style(t, fs):
@@ -570,7 +570,7 @@ class MainWindow(QMainWindow):
         right.addWidget(self.stack, 1)
         root.addLayout(right, 1)
         for fn in (self.page_home, self.page_chat, self.page_projects, self.page_files, self.page_knowledge,
-                   self.page_tools, self.page_sales, self.page_macros, self.page_settings, self.page_crypto, self.page_mining):
+                   self.page_tools, self.page_sales, self.page_macros, self.page_settings, self.page_crypto):
             self.stack.addWidget(fn())
         self.nav_buttons[0].setChecked(True)
         self.apply_theme()
@@ -583,8 +583,16 @@ class MainWindow(QMainWindow):
         self.mining_timer = QTimer(self)
         self.mining_timer.timeout.connect(self._mining_poll)
         self.mining_timer.start(3000)
+        self.auto_data_timer = QTimer(self)
+        self.auto_data_timer.timeout.connect(self._auto_refresh_data)
+        self.auto_data_timer.start(60_000)
         if start_listener:
             self._poll()
+            # Start with useful data already visible; no AI prompt is needed.
+            QTimer.singleShot(1200, self._crypto_refresh)
+            saved_address = str(self.s.get("wallet_public_address", "") or "").strip()
+            if saved_address:
+                QTimer.singleShot(2200, lambda: self._wallet_lookup(automatic=True))
             if self.s.get("always_listen"):
                 self.a.start_listening()
             QTimer.singleShot(1500, lambda: threading.Thread(target=self._check_brain, daemon=True).start())
@@ -1015,13 +1023,34 @@ class MainWindow(QMainWindow):
         v.addStretch(1)
         return w
 
-    # ---------- Crypto AI Trading (sicherer Paper-Trading-Start) ----------
+    # ---------- Krypto: Kurse, Wallet und Mining gemeinsam ----------
     def page_crypto(self):
+        """Ein einziger Krypto-Bereich mit Kursen, Wallet und Mining direkt untereinander."""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        v = QVBoxLayout(content)
+        v.setContentsMargins(22, 18, 22, 18)
+        v.setSpacing(18)
+        v.addWidget(lab("Krypto", "h1"))
+        v.addWidget(lab("Live-Kurse, Wallet-Übersicht, Paper-Käufe/-Verkäufe und Mining-Steuerung an einem Ort. Kurse aktualisieren automatisch.", "muted", True))
+        v.addWidget(self._page_crypto_market())
+        v.addWidget(self.page_wallet())
+        v.addWidget(self.page_mining(integrated=True))
+        v.addStretch(1)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        return page
+
+    def _page_crypto_market(self):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(22, 18, 22, 18)
-        v.addWidget(lab("Crypto AI Trading", "h1"))
-        v.addWidget(lab("Live-Marktdaten und simulierte Trades. Echtgeldhandel ist hier bewusst nicht aktiviert.", "muted", True))
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(lab("Markt & Kaufen/Verkaufen", "h1"))
+        v.addWidget(lab("Live-Marktdaten und simulierte Trades. Echte Käufe/Verkäufe benötigen eine separat eingerichtete Börsenintegration; diese Ansicht sendet keine Echtgeld-Orders.", "muted", True))
         bar = QHBoxLayout()
         self.crypto_refresh_btn = btn("Kurse aktualisieren", self._crypto_refresh)
         bar.addWidget(self.crypto_refresh_btn)
@@ -1031,6 +1060,7 @@ class MainWindow(QMainWindow):
         v.addLayout(bar)
         self.crypto_markets = QListWidget()
         self.crypto_markets.setMinimumHeight(260)
+        self.crypto_markets.setMaximumHeight(320)
         self.crypto_markets.addItem("Noch keine Kurse geladen. Klicke auf ‚Kurse aktualisieren‘.")
         v.addWidget(self.crypto_markets, 1)
         row = QHBoxLayout()
@@ -1050,28 +1080,47 @@ class MainWindow(QMainWindow):
         self.crypto_log.setMaximumHeight(140)
         v.addWidget(self.crypto_log)
 
-        wallet_box, wallet_layout = panel("Bitcoin-Wallet · Nur-Lese-Ansicht")
-        wallet_layout.addWidget(lab("Öffentliche BTC-Adresse eingeben. Niemals Seed-Phrase oder Private Key einfügen.", "muted", True))
-        wallet_row = QHBoxLayout()
-        self.wallet_address = QLineEdit()
-        self.wallet_address.setPlaceholderText("Bitcoin-Adresse (bc1…, 1… oder 3…)")
-        wallet_row.addWidget(self.wallet_address, 1)
-        self.wallet_refresh_btn = btn("Guthaben & Transaktionen laden", self._wallet_lookup)
-        wallet_row.addWidget(self.wallet_refresh_btn)
-        wallet_layout.addLayout(wallet_row)
-        self.wallet_status = lab("Es werden nur öffentliche Blockchain-Daten abgefragt; keine Transaktionen werden gesendet.", "muted", True)
-        wallet_layout.addWidget(self.wallet_status)
-        self.wallet_transactions = QPlainTextEdit()
-        self.wallet_transactions.setReadOnly(True)
-        self.wallet_transactions.setMaximumHeight(120)
-        self.wallet_transactions.setPlaceholderText("Letzte Transaktionen erscheinen hier.")
-        wallet_layout.addWidget(self.wallet_transactions)
-        v.addWidget(wallet_box)
 
         self._crypto_prices = []
         self._crypto_paper = self.s.get("crypto_paper") or {"eur": 1000.0, "holdings": {}, "log": []}
         self._crypto_update_paper_labels()
         return w
+
+    def page_wallet(self):
+        """Eigenständige Wallet-Seite mit automatischer Aktualisierung öffentlicher Daten."""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(22, 18, 22, 18)
+        v.addWidget(lab("Wallet verbinden · Bitcoin (nur lesend)", "h1"))
+        v.addWidget(lab(
+            "Öffentliche Bitcoin-Adresse einmal speichern; Guthaben und letzte Transaktionen werden danach automatisch aktualisiert. "
+            "Nur-Lese-Ansicht: YAVIS benötigt und fragt niemals Seed-Phrase oder Private Keys ab.", "muted", True))
+        box, layout = panel("Bitcoin-Wallet · automatisch · nur lesend")
+        row = QHBoxLayout()
+        self.wallet_address = QLineEdit(str(self.s.get("wallet_public_address", "") or ""))
+        self.wallet_address.setPlaceholderText("Öffentliche Bitcoin-Adresse (bc1…, 1… oder 3…)")
+        self.wallet_address.setClearButtonEnabled(True)
+        row.addWidget(self.wallet_address, 1)
+        self.wallet_refresh_btn = btn("Jetzt aktualisieren", self._wallet_lookup)
+        row.addWidget(self.wallet_refresh_btn)
+        layout.addLayout(row)
+        self.wallet_status = lab("Noch keine Adresse gespeichert. Einmal eintragen und aktualisieren; danach läuft es automatisch.", "status", True)
+        layout.addWidget(self.wallet_status)
+        self.wallet_transactions = QPlainTextEdit()
+        self.wallet_transactions.setReadOnly(True)
+        self.wallet_transactions.setMaximumHeight(130)
+        self.wallet_transactions.setPlaceholderText("Die letzten zehn Transaktionen erscheinen hier automatisch.")
+        layout.addWidget(self.wallet_transactions)
+        v.addWidget(box, 1)
+        v.addWidget(lab("Hinweis: Es werden keine Coins bewegt. Für andere Coins oder Börsenkonten braucht es jeweils eine eigene, sichere Datenquelle.", "muted", True))
+        return w
+
+    def _auto_refresh_data(self):
+        """Refresh public data periodically without requiring an AI prompt."""
+        if hasattr(self, "crypto_refresh_btn") and self.crypto_refresh_btn.isEnabled():
+            self._crypto_refresh()
+        if hasattr(self, "wallet_address") and self.wallet_address.text().strip() and self.wallet_refresh_btn.isEnabled():
+            self._wallet_lookup(automatic=True)
 
     def _crypto_refresh(self):
         self.crypto_refresh_btn.setEnabled(False)
@@ -1149,13 +1198,15 @@ class MainWindow(QMainWindow):
         self._crypto_update_paper_labels()
         self.crypto_status.setText("Nur Simulation – keine echte Transaktion wurde ausgeführt.")
 
-    def _wallet_lookup(self):
+    def _wallet_lookup(self, automatic=False):
         address = self.wallet_address.text().strip()
         if not address:
-            self.wallet_status.setText("Bitte eine öffentliche Bitcoin-Adresse eingeben.")
+            if not automatic:
+                self.wallet_status.setText("Einmalig deine öffentliche Bitcoin-Adresse eintragen. Danach aktualisiert YAVIS automatisch.")
             return
+        self.s.set("wallet_public_address", address)
         self.wallet_refresh_btn.setEnabled(False)
-        self.wallet_status.setText("Lade öffentliche Blockchain-Daten von Blockstream …")
+        self.wallet_status.setText("Automatische Abfrage öffentlicher Blockchain-Daten läuft …" if automatic else "Lade öffentliche Blockchain-Daten von Blockstream …")
         def fetch_wallet():
             try:
                 from .wallet import lookup_address, format_tx
@@ -1173,11 +1224,13 @@ class MainWindow(QMainWindow):
         btc = float(result.get("balance_btc", 0))
         confirmed = int(result.get("confirmed_sats", 0)) / 100_000_000
         unconfirmed = int(result.get("unconfirmed_sats", 0)) / 100_000_000
+        from datetime import datetime
+        stamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self.wallet_status.setText(
-            f"Guthaben: {btc:.8f} BTC · bestätigt: {confirmed:.8f} BTC · unbestätigt: {unconfirmed:+.8f} BTC"
+            f"Guthaben: {btc:.8f} BTC · bestätigt: {confirmed:.8f} BTC · unbestätigt: {unconfirmed:+.8f} BTC · aktualisiert {stamp}"
         )
         lines = result.get("transaction_lines") or ["Keine Transaktionen gefunden."]
-        self.wallet_transactions.setPlainText("\\n".join(lines))
+        self.wallet_transactions.setPlainText("\n".join(lines))
         self.wallet_refresh_btn.setEnabled(True)
 
     def _crypto_update_paper_labels(self):
@@ -1187,16 +1240,20 @@ class MainWindow(QMainWindow):
             self.crypto_log.setPlainText("\n".join(reversed(self._crypto_paper.get("log", []))))
 
     # ---------- GPU-Mining: Rechner, Telemetrie und expliziter Prozessstart ----------
-    def page_mining(self):
+    def page_mining(self, integrated=False):
         w = QWidget()
-        outer = QVBoxLayout(w)
-        outer.setContentsMargins(22, 18, 22, 18)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        inner = QWidget()
-        v = QVBoxLayout(inner)
-        v.addWidget(lab("GPU-Mining & Rentabilität", "h1"))
-        v.addWidget(lab("RTX 4070 SUPER · Schätzwerte statt Gewinnversprechen. Bitcoin direkt mit einer GPU ist gegenüber SHA-256-ASICs nicht konkurrenzfähig.", "muted", True))
+        if integrated:
+            v = QVBoxLayout(w)
+            v.setContentsMargins(0, 0, 0, 0)
+        else:
+            outer = QVBoxLayout(w)
+            outer.setContentsMargins(22, 18, 22, 18)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            inner = QWidget()
+            v = QVBoxLayout(inner)
+        v.addWidget(lab("Mining & Rentabilität", "h1"))
+        v.addWidget(lab("PeakMiner · GPU wird automatisch erkannt. Empfohlener Start-Coin: Pearl (PRL), kompatibel mit NVIDIA RTX 20xx/30xx/40xx. Kein Konto beim Pool nötig; du brauchst eine eigene PRL-Wallet-Adresse.", "muted", True))
 
         gpu_box, gv = panel("GPU-Status")
         self.mining_gpu_status = lab("Suche nvidia-smi …", "sect", True)
@@ -1214,10 +1271,10 @@ class MainWindow(QMainWindow):
         self.mining_watts = QLineEdit(str(self.s.get("mining_power_w") or "190"))
         grid.addWidget(self.mining_watts, 0, 3)
         grid.addWidget(lab("Bruttoertrag GPU-Coin (€/Tag)"), 1, 0)
-        self.mining_gross = QLineEdit(str(self.s.get("mining_gross_eur_day") or "0.60"))
+        self.mining_gross = QLineEdit(str(self.s.get("mining_gross_eur_day") or "0.00"))
         grid.addWidget(self.mining_gross, 1, 1)
-        grid.addWidget(lab("Poolgebühr (%)"), 1, 2)
-        self.mining_fee = QLineEdit(str(self.s.get("mining_pool_fee_percent") or "1.0"))
+        grid.addWidget(lab("Pool + Miner-Gebühren (%)"), 1, 2)
+        self.mining_fee = QLineEdit(str(self.s.get("mining_pool_fee_percent") or "2.0"))
         grid.addWidget(self.mining_fee, 1, 3)
         grid.addWidget(lab("Nutzungszeit (%)"), 2, 0)
         self.mining_uptime = QLineEdit(str(self.s.get("mining_uptime_percent") or "100"))
@@ -1240,8 +1297,34 @@ class MainWindow(QMainWindow):
         cmp.addWidget(self.mining_compare)
         v.addWidget(compare_box)
 
-        run_box, rv = panel("Miner-Steuerung (optional, manuell installiert)")
-        rv.addWidget(lab("YAVIS lädt keinen Miner herunter. Wähle selbst eine vertrauenswürdige .exe. Pool/Wallet/Worker-Argumente werden an diese Datei übergeben. Niemals Seed-Phrase oder private Schlüssel hier eingeben.", "muted", True))
+        run_box, rv = panel("Automatisches GPU-Mining · PeakMiner")
+        rv.addWidget(lab("Empfohlene Konfiguration: Pearl (PRL) über HeroMiners. Mining-Pool ohne Konto: Empfangsadresse als Benutzername. PeakMiner hat laut Projektangaben 2 % Entwicklergebühr für PRL; Poolgebühr und Mindest-Auszahlung können sich ändern. YAVIS lädt keine ausführbare Datei automatisch herunter.", "muted", True))
+        coin_row = QHBoxLayout()
+        coin_row.addWidget(lab("Coin:"))
+        self.mining_coin = QComboBox()
+        self.mining_coin.addItems(["Pearl (PRL)", "Quantus (QUAN)"])
+        saved_coin = self.s.get("mining_coin", "Pearl (PRL)")
+        self.mining_coin.setCurrentText(saved_coin if saved_coin in ("Pearl (PRL)", "Quantus (QUAN)") else "Pearl (PRL)")
+        coin_row.addWidget(self.mining_coin)
+        coin_row.addWidget(lab("Worker:"))
+        self.mining_worker = QLineEdit(self.s.get("mining_worker", "yavis-rig1"))
+        self.mining_worker.setMaximumWidth(160)
+        coin_row.addWidget(self.mining_worker)
+        coin_row.addStretch(1)
+        rv.addLayout(coin_row)
+        wallet_row = QHBoxLayout()
+        wallet_row.addWidget(lab("Öffentliche Empfangsadresse:"))
+        self.mining_wallet = QLineEdit(self.s.get("mining_wallet", ""))
+        self.mining_wallet.setPlaceholderText("PRL-Adresse (prl1…) oder Quantus-Adresse (qz…)")
+        wallet_row.addWidget(self.mining_wallet, 1)
+        rv.addLayout(wallet_row)
+        links_row = QHBoxLayout()
+        links_row.addWidget(btn("Offizielle PeakMiner-Releases öffnen", lambda: QDesktopServices.openUrl(QUrl("https://github.com/peakminer/peakminer/releases"))))
+        links_row.addWidget(btn("Pearl Wallet öffnen", lambda: QDesktopServices.openUrl(QUrl("https://pearlwallet.org/"))))
+        links_row.addWidget(btn("Argumente automatisch setzen", self._mining_configure_peakminer))
+        links_row.addStretch(1)
+        rv.addLayout(links_row)
+        rv.addWidget(lab("Nur eine öffentliche Empfangsadresse eintragen. Niemals Seed-Phrase, privaten Schlüssel oder Wallet-Passwort eingeben.", "muted", True))
         exe_row = QHBoxLayout()
         self.mining_exe = QLineEdit(self.s.get("mining_executable") or "")
         self.mining_exe.setPlaceholderText("Pfad zur Miner-EXE (noch nicht ausgewählt)")
@@ -1250,7 +1333,7 @@ class MainWindow(QMainWindow):
         rv.addLayout(exe_row)
         rv.addWidget(lab("Startargumente (optional; Beispiel je nach Miner/Pool unterschiedlich):", "muted"))
         self.mining_args = QLineEdit(self.s.get("mining_arguments") or "")
-        self.mining_args.setPlaceholderText("z. B. --algo ALGORITHMUS --pool HOST:PORT --user WALLET.WORKER")
+        self.mining_args.setPlaceholderText("Wird mit Coin + Wallet automatisch erstellt")
         rv.addWidget(self.mining_args)
         controls = QHBoxLayout()
         self.mining_start_btn = btn("Mining starten", self._mining_start)
@@ -1267,8 +1350,9 @@ class MainWindow(QMainWindow):
         rv.addWidget(lab(f"Protokoll: {self.mining_log_path}", "muted", True))
         v.addWidget(run_box)
         v.addStretch(1)
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
+        if not integrated:
+            scroll.setWidget(inner)
+            outer.addWidget(scroll)
         self._mining_calculate()
         self._mining_poll()
         return w
@@ -1299,6 +1383,10 @@ class MainWindow(QMainWindow):
         self.s.set("mining_uptime_percent", self.mining_uptime.text())
         self.s.set("mining_executable", self.mining_exe.text())
         self.s.set("mining_arguments", self.mining_args.text())
+        if hasattr(self, "mining_coin"):
+            self.s.set("mining_coin", self.mining_coin.currentText())
+            self.s.set("mining_wallet", self.mining_wallet.text().strip())
+            self.s.set("mining_worker", self.mining_worker.text().strip())
         self.mining_process_status.setText("Mining-Einstellungen lokal gespeichert.")
 
     def _mining_calculate(self):
@@ -1328,6 +1416,22 @@ class MainWindow(QMainWindow):
             "3) Nicht minen: 0 € Mining-Ertrag und 0 € zusätzlicher Mining-Strom.\n\n" +
             "Hinweis: Ein GPU-Miner kann weitere Coins/Algorithmen unterstützen; tatsächliche Erträge, Wechselkurs, Pool-Mindestzahlung, Gebühren und PC-Grundverbrauch fehlen in dieser Modellrechnung.")
 
+    def _mining_configure_peakminer(self):
+        try:
+            coin = self.mining_coin.currentText()
+            wallet = self.mining_wallet.text().strip()
+            worker = self.mining_worker.text().strip() or "yavis-rig1"
+            args = build_peakminer_arguments(coin, wallet, worker)
+            self.mining_args.setText(shlex.join(args))
+            self.mining_worker.setText(worker)
+            self.s.set("mining_coin", coin)
+            self.s.set("mining_wallet", wallet)
+            self.s.set("mining_worker", worker)
+            self.s.set("mining_arguments", self.mining_args.text())
+            self.mining_process_status.setText(f"{coin}-Konfiguration vorbereitet. Wähle danach die offizielle peakminer.exe aus.")
+        except ValueError as ex:
+            QMessageBox.warning(self, "Wallet-/Mining-Einstellungen prüfen", str(ex))
+
     def _mining_choose_exe(self):
         path, _ = QFileDialog.getOpenFileName(self, "Miner-Programm auswählen", "", "Windows-Programme (*.exe)")
         if path:
@@ -1340,6 +1444,13 @@ class MainWindow(QMainWindow):
             return
         path = self.mining_exe.text().strip()
         args_text = self.mining_args.text().strip()
+        if not args_text and hasattr(self, "mining_wallet"):
+            try:
+                args_text = shlex.join(build_peakminer_arguments(self.mining_coin.currentText(), self.mining_wallet.text().strip(), self.mining_worker.text().strip() or "yavis-rig1"))
+                self.mining_args.setText(args_text)
+            except ValueError as ex:
+                QMessageBox.warning(self, "Mining noch nicht konfiguriert", str(ex))
+                return
         if not path:
             QMessageBox.warning(self, "Miner fehlt", "Bitte zuerst eine vertrauenswürdige Miner-EXE auswählen. YAVIS installiert keine Mining-Software.")
             return
@@ -1386,6 +1497,10 @@ class MainWindow(QMainWindow):
                 self.mining_temp_status.setText(f"WARNUNG: GPU bei {temp:.0f} °C. Temperatur und Kühlung prüfen.")
             else:
                 self.mining_temp_status.setText("Temperaturschutz: Warnung ab 83 °C · automatischer Stopp ab 87 °C")
+            if self.miner.running and power is not None and power > 0 and hasattr(self, "mining_watts"):
+                # Use measured GPU draw while mining instead of a guessed wattage.
+                self.mining_watts.setText(f"{power:.0f}")
+                self._mining_calculate()
             if temp is not None and temp >= 87 and self.miner.running:
                 self.miner.stop()
                 self.mining_process_status.setText(f"Automatisch gestoppt: GPU-Temperatur {temp:.0f} °C (Grenze 87 °C).")

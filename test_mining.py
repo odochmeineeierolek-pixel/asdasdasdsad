@@ -23,3 +23,20 @@ if __name__ == "__main__":
     test_gpu_cost_and_profit()
     test_uptime_and_bounds()
     print("ok mining economics")
+
+
+def test_peakminer_argument_builder():
+    from yavis.mining import build_peakminer_arguments
+    args = build_peakminer_arguments("Pearl (PRL)", "prl1" + "a" * 45, "yavis-rig1")
+    assert args[:6] == ["--coin", "pearl", "--url", "de.pearl.herominers.com:1200", "--user", "prl1" + "a" * 45 + ".yavis-rig1"]
+    assert "--gpu-temp-stop" in args and "80" in args
+    try:
+        build_peakminer_arguments("Pearl (PRL)", "seed phrase words must never be accepted")
+        assert False, "seed phrase must be rejected"
+    except ValueError:
+        pass
+    try:
+        build_peakminer_arguments("Pearl (PRL)", "prl1" + "a" * 45, "worker;bad")
+        assert False, "unsafe worker should be rejected"
+    except ValueError:
+        pass

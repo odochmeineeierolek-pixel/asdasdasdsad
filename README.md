@@ -32,7 +32,7 @@ Aufgaben, Rechner, Wetter, Witze, Münze/Würfel/Zufall, Screenshot, Lautstärke
 (mit Bestätigung), Dateisuche, Ordner öffnen, Zwischenablage, Übersetzen, Tagesplan u. v. m.
 
 ## Ehrliche Grenzen
-- Crypto AI Trading enthält Live-Kursabfrage und Paper-Trading; echte Orders sind nicht aktiviert.
+- Der einzelne Tab **Krypto** vereint Live-Kurse, simulierte Käufe/Verkäufe, Bitcoin-Wallet-Ansicht und Mining-Steuerung. Echte Börsen-Orders sind derzeit nicht aktiviert; das Wallet ist eine öffentliche Bitcoin-Adresse im Nur-Lese-Modus.
 - Kein „automatisches Geldverdienen“: YAVIS bereitet Texte/Preisrecherche vor; Veröffentlichen, Kaufen, Bezahlen, Senden machst du selbst.
 - „Lernen“ = gemerkte Fakten + Feedback-Lektionen im Prompt; kein Selbstumprogrammieren.
 - Stimmen sind 16 Grundstimmen × Stile (Tempo/Tonhöhe), keine 56 völlig verschiedenen Sprecher. Edge-TTS ist ein inoffizieller Gratisdienst und kann sich ändern.
@@ -42,7 +42,7 @@ Aufgaben, Rechner, Wetter, Witze, Münze/Würfel/Zufall, Screenshot, Lautstärke
 
 ## GPU-Mining-Modul (neu)
 
-In der linken Navigation gibt es jetzt **Mining**. Das Modul enthält eine Stromkosten-/Nettogewinn-Rechnung, einen Vergleich GPU-Coin vs. direktes Bitcoin-GPU-Mining, NVIDIA-Telemetrie über `nvidia-smi`, Temperaturwarnung ab 83 °C und automatischen Prozess-Stopp ab 87 °C. Für den Start muss `nvidia-smi` verfügbar sein; sonst blockiert YAVIS den Start aus Sicherheitsgründen.
+Im Tab **Krypto** gibt es einen Mining-Bereich. Das Modul enthält eine Stromkosten-/Nettogewinn-Rechnung, einen Vergleich GPU-Coin vs. direktes Bitcoin-GPU-Mining, NVIDIA-Telemetrie über `nvidia-smi`, Temperaturwarnung ab 83 °C und automatischen Prozess-Stopp ab 87 °C. Für den Start muss `nvidia-smi` verfügbar sein; sonst blockiert YAVIS den Start aus Sicherheitsgründen.
 
 YAVIS lädt keine Miner herunter und führt keine Shell-Befehle aus. Zum Start ist eine vom Benutzer installierte, vertrauenswürdige `.exe` nötig. Pool- und Worker-Argumente hängen vom gewählten Miner und Pool ab. Niemals Seed-Phrasen oder private Schlüssel in Argumente eintragen. Der Ertrag ist eine editierbare Annahme und keine Live-Prognose. Die Berechnung berücksichtigt Strom, Poolgebühr und Nutzungszeit; PC-Grundverbrauch, Auszahlungsschwellen, Hardwareverschleiß, Steuern und Kursrisiko sind nicht automatisch enthalten.
 
@@ -53,7 +53,7 @@ Tests: `python tests/test_core.py` und `python tests/test_mining.py`.
 
 ## Bitcoin-Wallet (nur lesend)
 
-Im Bereich „Crypto AI Trading“ kann eine **öffentliche Bitcoin-Adresse** abgefragt werden.
+Im Tab **Krypto** kann eine **öffentliche Bitcoin-Adresse** abgefragt werden.
 YAVIS zeigt bestätigtes/unbestätigtes Guthaben und die letzten Transaktionen über die
 öffentliche Blockstream-Esplora-API an. Das Modul benötigt keine Seed-Phrase oder Private
 Keys und kann keine Transaktionen signieren oder senden. Die Adresse wird an Blockstream
@@ -66,3 +66,10 @@ GitHub Actions führt Kern-, Mining- und Wallet-Tests aus, baut die Windows-App 
 PyInstaller und prüft anschließend den Selbsttest der gebauten EXE. Der vollständige
 Windows-Build muss in GitHub Actions tatsächlich durchlaufen, bevor ein Installer als
 erfolgreich bestätigt werden kann.
+
+
+## Krypto-Mining (optional)
+
+Im Tab „Krypto“ kann PeakMiner für Pearl (PRL) oder Quantus (QUAN) vorbereitet werden. Lade die Miner-EXE nur von den offiziellen Releases unter https://github.com/peakminer/peakminer/releases und prüfe sie vor dem Start. Für PRL wird eine eigene öffentliche PRL-Empfangsadresse benötigt (offizielle Wallet: https://pearlwallet.org/). Blockstream Green ist keine PRL-Wallet. Gib niemals Seed-Phrase oder private Schlüssel in YAVIS ein. YAVIS lädt keine Miner-Binärdateien automatisch herunter.
+
+Standard-Strompreis: 0,34 €/kWh. Die aktuelle GPU-Leistung wird beim laufenden Mining aus `nvidia-smi` gelesen; der Brutto-Ertrag bleibt ein Schätzwert, solange keine verifizierte Live-Ertragsquelle angebunden ist.

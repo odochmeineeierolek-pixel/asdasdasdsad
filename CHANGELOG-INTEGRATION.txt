@@ -19,3 +19,12 @@ Zusätzliche Aktualisierung:
   unbestätigtes BTC-Guthaben sowie bis zu 10 aktuelle Transaktionen via Blockstream.
 - Keine Seed-Phrase/Private Keys; keine Signierung oder Übermittlung von Transaktionen.
 - Wallet-Test ergänzt und in GitHub Actions aufgenommen.
+
+
+Krypto-/Mining-Erweiterung (23.10.2026)
+- PeakMiner-Konfiguration im Krypto-Tab: Pearl (PRL) und Quantus (QUAN).
+- Wallet-Adresse/Worker-Felder und automatische sichere CLI-Argumente; Seed-Phrasen/Private Keys werden nicht akzeptiert.
+- Standard-Pool für Pearl ist HeroMiners EU; Temperaturpause bei 80 °C, Wiederaufnahme bei 70 °C.
+- Strompreis bleibt standardmäßig 0,34 €/kWh; GPU-Leistungsfeld wird während laufendem Mining mit nvidia-smi-Messwerten aktualisiert.
+- Miner-Binärdatei wird aus Sicherheitsgründen nicht automatisch heruntergeladen; Nutzer wählt die EXE aus offizieller Quelle.
+- Tests für Argumentengenerator und ungültige Eingaben ergänzt.
