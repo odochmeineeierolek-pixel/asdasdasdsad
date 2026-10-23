@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from . import programs, voices
 from .assistant import Assistant, Hooks
 from .config import home_dir
-from .mining import MinerController, estimate_economics, read_nvidia_metrics, build_peakminer_arguments
+from .mining import MinerController, estimate_economics, read_nvidia_metrics, build_peakminer_arguments, download_peakminer
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -214,6 +214,11 @@ class Orb(QWidget):
             rect = QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr)
             for k in range(3):
                 p.drawArc(rect, int((self.rot * d + i * 40 + k * 120) * 16), int(span * 16))
+
+
+class PeakMinerDownloadSignals(QObject):
+    completed = Signal(str)
+    failed = Signal(str)
 
 
 class Bridge(QObject):
@@ -1298,7 +1303,7 @@ class MainWindow(QMainWindow):
         v.addWidget(compare_box)
 
         run_box, rv = panel("Automatisches GPU-Mining · PeakMiner")
-        rv.addWidget(lab("Empfohlene Konfiguration: Pearl (PRL) über HeroMiners. Mining-Pool ohne Konto: Empfangsadresse als Benutzername. PeakMiner hat laut Projektangaben 2 % Entwicklergebühr für PRL; Poolgebühr und Mindest-Auszahlung können sich ändern. YAVIS lädt keine ausführbare Datei automatisch herunter.", "muted", True))
+        rv.addWidget(lab("Empfohlene Konfiguration: Pearl (PRL) über HeroMiners. YAVIS kann die offizielle Windows-Version herunterladen und ihre SHA-256-Prüfsumme kontrollieren. Der Miner startet erst nach deiner ausdrücklichen Freigabe und korrekter Wallet-/Pool-Konfiguration.", "muted", True))
         coin_row = QHBoxLayout()
         coin_row.addWidget(lab("Coin:"))
         self.mining_coin = QComboBox()
@@ -1319,9 +1324,12 @@ class MainWindow(QMainWindow):
         wallet_row.addWidget(self.mining_wallet, 1)
         rv.addLayout(wallet_row)
         links_row = QHBoxLayout()
-        links_row.addWidget(btn("Offizielle PeakMiner-Releases öffnen", lambda: QDesktopServices.openUrl(QUrl("https://github.com/peakminer/peakminer/releases"))))
+        links_row.addWidget(btn("Offizielle Releases öffnen", lambda: QDesktopServices.openUrl(QUrl("https://github.com/peakminer/peakminer/releases"))))
         links_row.addWidget(btn("Pearl Wallet öffnen", lambda: QDesktopServices.openUrl(QUrl("https://pearlwallet.org/"))))
         links_row.addWidget(btn("Argumente automatisch setzen", self._mining_configure_peakminer))
+        self.mining_download_btn = btn("PeakMiner automatisch herunterladen", self._mining_download_peakminer)
+        self.mining_download_btn.setObjectName("send")
+        links_row.addWidget(self.mining_download_btn)
         links_row.addStretch(1)
         rv.addLayout(links_row)
         rv.addWidget(lab("Nur eine öffentliche Empfangsadresse eintragen. Niemals Seed-Phrase, privaten Schlüssel oder Wallet-Passwort eingeben.", "muted", True))
@@ -1431,6 +1439,42 @@ class MainWindow(QMainWindow):
             self.mining_process_status.setText(f"{coin}-Konfiguration vorbereitet. Wähle danach die offizielle peakminer.exe aus.")
         except ValueError as ex:
             QMessageBox.warning(self, "Wallet-/Mining-Einstellungen prüfen", str(ex))
+
+    def _mining_download_peakminer(self):
+        """Download and checksum-verify the official PeakMiner package in a background thread."""
+        if getattr(self, "_peakminer_download_running", False):
+            return
+        self._peakminer_download_running = True
+        self.mining_download_btn.setEnabled(False)
+        self.mining_process_status.setText("Lade offiziellen PeakMiner-Download herunter und prüfe die SHA-256-Summe …")
+        self._peakminer_download_signals = PeakMinerDownloadSignals(self)
+        self._peakminer_download_signals.completed.connect(self._mining_download_complete)
+        self._peakminer_download_signals.failed.connect(self._mining_download_failed)
+        destination = home_dir() / "tools" / "PeakMiner"
+
+        def work():
+            try:
+                exe = download_peakminer(destination)
+                self._peakminer_download_signals.completed.emit(str(exe))
+            except Exception as ex:
+                self._peakminer_download_signals.failed.emit(str(ex))
+
+        self._peakminer_download_thread = threading.Thread(target=work, name="YAVIS-PeakMiner-Download", daemon=True)
+        self._peakminer_download_thread.start()
+
+    def _mining_download_complete(self, executable):
+        self._peakminer_download_running = False
+        self.mining_download_btn.setEnabled(True)
+        self.mining_exe.setText(executable)
+        self.s.set("mining_executable", executable)
+        self.mining_process_status.setText("PeakMiner heruntergeladen, SHA-256 geprüft und bereit. Mining startet nicht automatisch.")
+        QMessageBox.information(self, "PeakMiner bereit", "PeakMiner wurde aus der offiziellen Quelle heruntergeladen und die Prüfsumme stimmt.\n\nAls Nächstes: öffentliche Empfangsadresse eintragen, Argumente automatisch setzen und erst danach selbst Mining starten.\n\nDatei: " + executable)
+
+    def _mining_download_failed(self, error):
+        self._peakminer_download_running = False
+        self.mining_download_btn.setEnabled(True)
+        self.mining_process_status.setText("PeakMiner-Download fehlgeschlagen: " + str(error)[:180])
+        QMessageBox.warning(self, "PeakMiner konnte nicht heruntergeladen werden", str(error)[:1200] + "\n\nPrüfe die Internetverbindung oder lade die offizielle Version manuell über https://github.com/peakminer/peakminer/releases herunter.")
 
     def _mining_choose_exe(self):
         path, _ = QFileDialog.getOpenFileName(self, "Miner-Programm auswählen", "", "Windows-Programme (*.exe)")

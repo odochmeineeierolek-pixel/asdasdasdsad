@@ -5,12 +5,86 @@ vom Benutzer ausgewählte Software gestartet, ohne Shell-Ausführung.
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
+import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Optional
+
+
+PEAKMINER_VERSION = "2.20.0"
+PEAKMINER_URL = (
+    "https://github.com/peakminer/peakminer/releases/download/v2.20.0/"
+    "peakminer-2.20.0-windows-x86_64.zip"
+)
+PEAKMINER_SHA256 = "02872d966abfd82f8ab0ecd45e414820c37bb6a7ca06858b4967d27bd7d0a3f1"
+
+
+def download_peakminer(destination: str | Path, *, opener=None) -> Path:
+    """Download the pinned official Windows release, verify its SHA-256 and safely extract it.
+
+    Does not start the miner. The user must configure a public wallet address and pool first.
+    """
+    destination = Path(destination).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(PEAKMINER_URL, headers={"User-Agent": "YAVIS-PeakMiner-Installer"})
+    open_url = opener or urllib.request.urlopen
+    digest = hashlib.sha256()
+    with tempfile.TemporaryDirectory(prefix="yavis-peakminer-", dir=destination.parent) as tmp_name:
+        tmp = Path(tmp_name)
+        archive = tmp / "peakminer.zip"
+        total = 0
+        with open_url(request, timeout=45) as response, archive.open("wb") as out:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 250 * 1024 * 1024:
+                    raise RuntimeError("PeakMiner-Archiv überschreitet die Sicherheitsgrenze von 250 MB.")
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest().lower() != PEAKMINER_SHA256:
+            raise RuntimeError("SHA-256-Prüfung fehlgeschlagen. Der Download wurde nicht installiert.")
+        if not zipfile.is_zipfile(archive):
+            raise RuntimeError("Der offizielle Download ist kein gültiges ZIP-Archiv.")
+        extracted = tmp / "extracted"
+        extracted.mkdir()
+        with zipfile.ZipFile(archive) as zf:
+            root = extracted.resolve()
+            for info in zf.infolist():
+                member = (extracted / info.filename).resolve()
+                if member != root and root not in member.parents:
+                    raise RuntimeError("Unsicherer Pfad im ZIP-Archiv erkannt.")
+            zf.extractall(extracted)
+        exe_candidates = list(extracted.rglob("peakminer.exe"))
+        if not exe_candidates:
+            raise RuntimeError("Im geprüften Archiv wurde keine peakminer.exe gefunden.")
+        staged = tmp / "install"
+        shutil.move(str(extracted), str(staged))
+        backup = destination.with_name(destination.name + ".old")
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        if destination.exists():
+            destination.replace(backup)
+        try:
+            staged.replace(destination)
+        except Exception:
+            if backup.exists() and not destination.exists():
+                backup.replace(destination)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+    installed = list(destination.rglob("peakminer.exe"))
+    if not installed:
+        raise RuntimeError("Installation abgeschlossen, aber peakminer.exe wurde nicht gefunden.")
+    return installed[0]
 
 
 def estimate_economics(power_w: float, electricity_eur_kwh: float,

@@ -40,3 +40,11 @@ def test_peakminer_argument_builder():
         assert False, "unsafe worker should be rejected"
     except ValueError:
         pass
+
+
+def test_peakminer_download_is_pinned_and_checksum_verified():
+    from yavis.mining import PEAKMINER_URL, PEAKMINER_SHA256, PEAKMINER_VERSION
+    assert PEAKMINER_VERSION == "2.20.0"
+    assert PEAKMINER_URL.endswith("peakminer-2.20.0-windows-x86_64.zip")
+    assert len(PEAKMINER_SHA256) == 64
+    assert all(ch in "0123456789abcdef" for ch in PEAKMINER_SHA256)

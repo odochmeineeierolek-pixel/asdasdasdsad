@@ -73,3 +73,10 @@ erfolgreich bestätigt werden kann.
 Im Tab „Krypto“ kann PeakMiner für Pearl (PRL) oder Quantus (QUAN) vorbereitet werden. Lade die Miner-EXE nur von den offiziellen Releases unter https://github.com/peakminer/peakminer/releases und prüfe sie vor dem Start. Für PRL wird eine eigene öffentliche PRL-Empfangsadresse benötigt (offizielle Wallet: https://pearlwallet.org/). Blockstream Green ist keine PRL-Wallet. Gib niemals Seed-Phrase oder private Schlüssel in YAVIS ein. YAVIS lädt keine Miner-Binärdateien automatisch herunter.
 
 Standard-Strompreis: 0,34 €/kWh. Die aktuelle GPU-Leistung wird beim laufenden Mining aus `nvidia-smi` gelesen; der Brutto-Ertrag bleibt ein Schätzwert, solange keine verifizierte Live-Ertragsquelle angebunden ist.
+
+
+### PeakMiner-Installation im Krypto-Tab
+
+Im Tab **Krypto** kann die offizielle PeakMiner-Windows-x64-Version über **PeakMiner automatisch herunterladen** bezogen werden. YAVIS lädt die festgelegte Version 2.20.0, prüft vor dem Entpacken die veröffentlichte SHA-256-Prüfsumme und schützt gegen unsichere ZIP-Pfade. Der Miner wird nach dem Download nicht automatisch gestartet; zuerst müssen Coin, öffentliche Empfangsadresse und Pool geprüft sowie die Startargumente gesetzt werden. Die Installation erfolgt unter `%APPDATA%\YAVIS\tools\PeakMiner`.
+
+Quelle und Release-Informationen: https://github.com/peakminer/peakminer/releases
