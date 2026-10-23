@@ -1,25 +1,21 @@
-YAVIS - SO LÄDST DU ES HOCH (ca. 5 Minuten)
+YAVIS – Mining-Modul integriert
 
-1) ALTE WORKFLOWS LÖSCHEN (damit nur die neue Datei läuft)
-   GitHub-Repository öffnen -> Ordner ".github" -> "workflows".
-   Jede dort liegende Datei öffnen -> oben rechts Papierkorb-Symbol -> "Commit changes".
+1. Entpacke den gesamten Projektordner.
+2. Installiere Python 3.11+ und Abhängigkeiten: python -m pip install -r requirements.txt
+3. Starte YAVIS mit: python main.py
+4. Öffne links die Kategorie „Mining“.
+5. Prüfe Strompreis, GPU-Leistung und Ertragsschätzung. Die Ertragsschätzung ist kein Live-Wert.
+6. GPU-Telemetrie muss verfügbar sein (NVIDIA-Treiber mit nvidia-smi). Wenn sie fehlt, blockiert YAVIS den Miner-Start.
+7. Für echten Mining-Start muss eine vertrauenswürdige Miner-.exe separat installiert und ausgewählt werden. YAVIS lädt keine Mining-Software herunter.
+8. Pool-/Algorithmus-/Worker-Argumente sind vom ausgewählten Miner und Pool abhängig. Niemals Seed-Phrase oder privaten Schlüssel eingeben.
 
-2) ALTE DATEIEN ENTFERNEN (optional, aber sauberer)
-   Löschen geht pro Datei/Ordner ebenso. Alternativ einfach beim Hochladen überschreiben lassen.
+Sicherheitsverhalten:
+- explizite Bestätigung vor Start
+- keine Shell-Ausführung
+- Stopp bei 87 °C, Warnung ab 83 °C
+- Prozess wird beim Beenden der App gestoppt
+- Logdatei liegt im YAVIS-Benutzerdatenordner als mining.log
 
-3) HOCHLADEN
-   Diese ZIP entpacken. In den entpackten Ordner "YAVIS" gehen.
-   Im Repository: "Add file" -> "Upload files".
-   ALLES AUS DEM ORDNER (nicht den Ordner YAVIS selbst) in das Fenster ziehen:
-     .github, assets, installer, tests, tools, yavis, main.py, requirements.txt, README.md, .gitignore
-   Der Ordner ".github" ist versteckt: im Windows-Explorer oben auf Ansicht -> Anzeigen -> "Ausgeblendete Elemente" klicken.
-   Unten auf "Commit changes" klicken.
-
-4) BUILD STARTEN
-   Reiter "Actions". Der Lauf startet automatisch. Falls nicht: links "Build YAVIS-Setup.exe" -> "Run workflow".
-   Dauer ca. 15-25 Minuten. Grüner Haken = fertig.
-
-5) EXE HOLEN
-   Auf den Lauf klicken -> ganz unten "Artifacts" -> "YAVIS-Setup" herunterladen -> entpacken -> YAVIS-Setup.exe starten.
-
-Wird der Lauf rot: Screenshot des roten Schritts schicken.
+Tests:
+python tests/test_core.py
+python tests/test_mining.py

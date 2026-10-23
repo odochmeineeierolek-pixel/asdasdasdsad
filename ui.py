@@ -3,13 +3,11 @@ Automatisierungen, Einstellungen. Farben, Lautstärken, Sortierung und Kategorie
 import math
 import os
 import random
+import shlex
 import sys
 import tempfile
 import threading
 import urllib.request
-import shutil
-import subprocess
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
@@ -22,6 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from . import programs, voices
 from .assistant import Assistant, Hooks
 from .config import home_dir
+from .mining import MinerController, estimate_economics, read_nvidia_metrics
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -68,7 +67,7 @@ QScrollArea{border:none}
 STATUS_TEXT = {"idle": "Bereit – sag „YAVIS“", "listening": "Ich höre zu …", "thinking": "Ich denke nach …",
                "speaking": "", "muted": "Mikrofon aus", "loading": "Lade Spracherkennung …", "error": "Fehler – siehe Verlauf"}
 NAV = [("Home", "🏠"), ("Chat", "💬"), ("Projekte", "📁"), ("Dateien", "📄"), ("Wissen", "📖"), ("Tools", "🛠"),
-       ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Crypto AI Trading", "₿")]
+       ("Automatisierungen", "⚡"), ("Einstellungen", "⚙"), ("Crypto AI Trading", "₿"), ("Mining", "⛏")]
 
 
 def build_style(t, fs):
@@ -528,10 +527,6 @@ class CatTree(QWidget):
         self.refresh()
 
 
-class LMStudioSetupSignals(QObject):
-    finished = Signal(bool, str)
-
-
 class MainWindow(QMainWindow):
     def __init__(self, start_listener=True):
         super().__init__()
@@ -540,6 +535,7 @@ class MainWindow(QMainWindow):
         self.resize(1360, 860)
         self._quitting = False
         self.b = Bridge()
+        self.miner = MinerController()
         self.a = Assistant(UiHooks(self.b))
         self.s = self.a.s
         self.b.log.connect(self.on_log)
@@ -568,7 +564,7 @@ class MainWindow(QMainWindow):
         right.addWidget(self.stack, 1)
         root.addLayout(right, 1)
         for fn in (self.page_home, self.page_chat, self.page_projects, self.page_files, self.page_knowledge,
-                   self.page_tools, self.page_macros, self.page_settings, self.page_crypto):
+                   self.page_tools, self.page_macros, self.page_settings, self.page_crypto, self.page_mining):
             self.stack.addWidget(fn())
         self.nav_buttons[0].setChecked(True)
         self.apply_theme()
@@ -578,108 +574,14 @@ class MainWindow(QMainWindow):
         self.poll = QTimer(self)
         self.poll.timeout.connect(self._poll)
         self.poll.start(8000)
+        self.mining_timer = QTimer(self)
+        self.mining_timer.timeout.connect(self._mining_poll)
+        self.mining_timer.start(3000)
         if start_listener:
             self._poll()
             if self.s.get("always_listen"):
                 self.a.start_listening()
             QTimer.singleShot(1500, lambda: threading.Thread(target=self._check_brain, daemon=True).start())
-            # First-run setup: install LM Studio automatically on Windows if missing.
-            if os.name == "nt":
-                self._lm_setup_signals = LMStudioSetupSignals()
-                self._lm_setup_signals.finished.connect(self._lmstudio_setup_finished)
-                QTimer.singleShot(2200, self._ensure_lmstudio)
-
-    # ---------- LM Studio Erstinstallation ----------
-    def _lmstudio_candidates(self):
-        candidates = []
-        local = os.environ.get("LOCALAPPDATA", "")
-        program_files = os.environ.get("ProgramFiles", r"C:\\Program Files")
-        if local:
-            candidates.extend([
-                Path(local) / "Programs" / "LM Studio" / "LM Studio.exe",
-                Path(local) / "Programs" / "LM Studio" / "LM Studio" / "LM Studio.exe",
-            ])
-        candidates.extend([
-            Path(program_files) / "LM Studio" / "LM Studio.exe",
-            Path(program_files) / "LM Studio" / "LM Studio" / "LM Studio.exe",
-        ])
-        return next((p for p in candidates if p.exists()), None)
-
-    def _ensure_lmstudio(self):
-        # If the local API already responds, LM Studio is installed and ready.
-        try:
-            req = urllib.request.Request(
-                self.s.get("lmstudio_url", "http://localhost:1234/v1").rstrip("/") + "/models"
-            )
-            with urllib.request.urlopen(req, timeout=2):
-                self.status.setText("LM Studio ist bereit.")
-                return
-        except Exception:
-            pass
-
-        installed = self._lmstudio_candidates()
-        if installed:
-            try:
-                subprocess.Popen([str(installed)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                self.status.setText("LM Studio wird gestartet. Lade ein Modell und starte den lokalen Server.")
-            except Exception as exc:
-                self.status.setText(f"LM Studio gefunden, konnte aber nicht gestartet werden: {exc}")
-            return
-
-        winget = shutil.which("winget")
-        if not winget:
-            self.status.setText("LM Studio fehlt; winget ist nicht verfügbar. Öffne lmstudio.ai zum Installieren.")
-            try:
-                import webbrowser
-                webbrowser.open("https://lmstudio.ai/download")
-            except Exception:
-                pass
-            return
-
-        self.status.setText("LM Studio fehlt – automatische Installation wird gestartet …")
-        threading.Thread(target=self._install_lmstudio, args=(winget,), daemon=True).start()
-
-    def _install_lmstudio(self, winget):
-        try:
-            result = subprocess.run(
-                [winget, "install", "--exact", "--id", "ElementLabs.LMStudio", "--silent",
-                 "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"],
-                capture_output=True, text=True, timeout=900,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            )
-            if result.returncode not in (0, -1978335189):  # 0 or winget's "already installed"
-                detail = (result.stderr or result.stdout or "").strip()[-1200:]
-                self._lm_setup_signals.finished.emit(
-                    False, "Die automatische LM-Studio-Installation ist fehlgeschlagen. "
-                    + (detail or f"winget Exit-Code: {result.returncode}")
-                )
-                return
-            self._lm_setup_signals.finished.emit(True, "LM Studio wurde installiert.")
-        except subprocess.TimeoutExpired:
-            self._lm_setup_signals.finished.emit(False, "Die LM-Studio-Installation hat zu lange gedauert.")
-        except Exception as exc:
-            self._lm_setup_signals.finished.emit(False, f"LM-Studio-Installation fehlgeschlagen: {exc}")
-
-    def _lmstudio_setup_finished(self, success, message):
-        if not success:
-            self.status.setText("LM Studio konnte nicht automatisch installiert werden.")
-            QMessageBox.warning(self, "LM Studio", message + "\\n\\nDu kannst es über https://lmstudio.ai/download installieren.")
-            return
-        installed = self._lmstudio_candidates()
-        if installed:
-            try:
-                subprocess.Popen([str(installed)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            except Exception:
-                pass
-        self.status.setText("LM Studio installiert. Öffne es, lade ein Modell herunter und starte den lokalen Server.")
-        QMessageBox.information(
-            self, "LM Studio installiert",
-            "LM Studio wurde automatisch installiert.\\n\\n"
-            "Einmalig noch nötig: In LM Studio ein Modell herunterladen und den lokalen Server starten. "
-            "Danach kann YAVIS die lokale KI ohne externen API-Schlüssel nutzen."
-        )
 
     # ---------- Grundgerüst ----------
     def _build_sidebar(self):
@@ -1225,6 +1127,220 @@ class MainWindow(QMainWindow):
         if hasattr(self, "crypto_log"):
             self.crypto_log.setPlainText("\n".join(reversed(self._crypto_paper.get("log", []))))
 
+    # ---------- GPU-Mining: Rechner, Telemetrie und expliziter Prozessstart ----------
+    def page_mining(self):
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(22, 18, 22, 18)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.addWidget(lab("GPU-Mining & Rentabilität", "h1"))
+        v.addWidget(lab("RTX 4070 SUPER · Schätzwerte statt Gewinnversprechen. Bitcoin direkt mit einer GPU ist gegenüber SHA-256-ASICs nicht konkurrenzfähig.", "muted", True))
+
+        gpu_box, gv = panel("GPU-Status")
+        self.mining_gpu_status = lab("Suche nvidia-smi …", "sect", True)
+        gv.addWidget(self.mining_gpu_status)
+        self.mining_temp_status = lab("Temperaturschutz: Warnung ab 83 °C · automatischer Stopp ab 87 °C", "muted", True)
+        gv.addWidget(self.mining_temp_status)
+        v.addWidget(gpu_box)
+
+        calc_box, cv = panel("Stromkosten & Nettogewinn")
+        grid = QGridLayout()
+        grid.addWidget(lab("Strompreis (€/kWh)"), 0, 0)
+        self.mining_electricity = QLineEdit(str(self.s.get("mining_electricity_eur_kwh") or "0.34"))
+        grid.addWidget(self.mining_electricity, 0, 1)
+        grid.addWidget(lab("GPU-Leistung (W)"), 0, 2)
+        self.mining_watts = QLineEdit(str(self.s.get("mining_power_w") or "190"))
+        grid.addWidget(self.mining_watts, 0, 3)
+        grid.addWidget(lab("Bruttoertrag GPU-Coin (€/Tag)"), 1, 0)
+        self.mining_gross = QLineEdit(str(self.s.get("mining_gross_eur_day") or "0.60"))
+        grid.addWidget(self.mining_gross, 1, 1)
+        grid.addWidget(lab("Poolgebühr (%)"), 1, 2)
+        self.mining_fee = QLineEdit(str(self.s.get("mining_pool_fee_percent") or "1.0"))
+        grid.addWidget(self.mining_fee, 1, 3)
+        grid.addWidget(lab("Nutzungszeit (%)"), 2, 0)
+        self.mining_uptime = QLineEdit(str(self.s.get("mining_uptime_percent") or "100"))
+        grid.addWidget(self.mining_uptime, 2, 1)
+        cv.addLayout(grid)
+        self.mining_calc_result = lab("Klicke auf „Rentabilität berechnen“.", "sect", True)
+        cv.addWidget(self.mining_calc_result)
+        row = QHBoxLayout()
+        row.addWidget(btn("Rentabilität berechnen", self._mining_calculate))
+        row.addWidget(btn("Einstellungen speichern", self._mining_save_settings))
+        row.addStretch(1)
+        cv.addLayout(row)
+        v.addWidget(calc_box)
+
+        compare_box, cmp = panel("Optionen im Vergleich")
+        cmp.addWidget(lab("Die Erträge sind editierbare Beispielwerte und keine Live-Prognose. Aktuelle Ertragsdaten vor einer Entscheidung prüfen.", "muted", True))
+        self.mining_compare = QPlainTextEdit()
+        self.mining_compare.setReadOnly(True)
+        self.mining_compare.setMaximumHeight(125)
+        cmp.addWidget(self.mining_compare)
+        v.addWidget(compare_box)
+
+        run_box, rv = panel("Miner-Steuerung (optional, manuell installiert)")
+        rv.addWidget(lab("YAVIS lädt keinen Miner herunter. Wähle selbst eine vertrauenswürdige .exe. Pool/Wallet/Worker-Argumente werden an diese Datei übergeben. Niemals Seed-Phrase oder private Schlüssel hier eingeben.", "muted", True))
+        exe_row = QHBoxLayout()
+        self.mining_exe = QLineEdit(self.s.get("mining_executable") or "")
+        self.mining_exe.setPlaceholderText("Pfad zur Miner-EXE (noch nicht ausgewählt)")
+        exe_row.addWidget(self.mining_exe, 1)
+        exe_row.addWidget(btn("EXE auswählen …", self._mining_choose_exe))
+        rv.addLayout(exe_row)
+        rv.addWidget(lab("Startargumente (optional; Beispiel je nach Miner/Pool unterschiedlich):", "muted"))
+        self.mining_args = QLineEdit(self.s.get("mining_arguments") or "")
+        self.mining_args.setPlaceholderText("z. B. --algo ALGORITHMUS --pool HOST:PORT --user WALLET.WORKER")
+        rv.addWidget(self.mining_args)
+        controls = QHBoxLayout()
+        self.mining_start_btn = btn("Mining starten", self._mining_start)
+        self.mining_start_btn.setObjectName("send")
+        self.mining_stop_btn = btn("Mining stoppen", self._mining_stop)
+        self.mining_stop_btn.setObjectName("stop")
+        controls.addWidget(self.mining_start_btn)
+        controls.addWidget(self.mining_stop_btn)
+        controls.addStretch(1)
+        rv.addLayout(controls)
+        self.mining_process_status = lab("Mining ist gestoppt.", "status", True)
+        rv.addWidget(self.mining_process_status)
+        self.mining_log_path = str(home_dir() / "mining.log")
+        rv.addWidget(lab(f"Protokoll: {self.mining_log_path}", "muted", True))
+        v.addWidget(run_box)
+        v.addStretch(1)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
+        self._mining_calculate()
+        self._mining_poll()
+        return w
+
+    def _mining_float(self, field, label, minimum=0.0, maximum=1000000.0):
+        try:
+            value = float(field.text().strip().replace(",", "."))
+            if not minimum <= value <= maximum:
+                raise ValueError
+            return value
+        except (ValueError, AttributeError):
+            raise ValueError(f"Ungültiger Wert für {label}.")
+
+    def _mining_save_settings(self):
+        try:
+            self._mining_float(self.mining_electricity, "Strompreis")
+            self._mining_float(self.mining_watts, "GPU-Leistung", 1, 2000)
+            self._mining_float(self.mining_gross, "Bruttoertrag")
+            self._mining_float(self.mining_fee, "Poolgebühr", 0, 100)
+            self._mining_float(self.mining_uptime, "Nutzungszeit", 0, 100)
+        except ValueError as ex:
+            QMessageBox.warning(self, "Eingaben prüfen", str(ex))
+            return
+        self.s.set("mining_electricity_eur_kwh", self.mining_electricity.text())
+        self.s.set("mining_power_w", self.mining_watts.text())
+        self.s.set("mining_gross_eur_day", self.mining_gross.text())
+        self.s.set("mining_pool_fee_percent", self.mining_fee.text())
+        self.s.set("mining_uptime_percent", self.mining_uptime.text())
+        self.s.set("mining_executable", self.mining_exe.text())
+        self.s.set("mining_arguments", self.mining_args.text())
+        self.mining_process_status.setText("Mining-Einstellungen lokal gespeichert.")
+
+    def _mining_calculate(self):
+        try:
+            rate = self._mining_float(self.mining_electricity, "Strompreis")
+            watts = self._mining_float(self.mining_watts, "GPU-Leistung", 1, 2000)
+            gross = self._mining_float(self.mining_gross, "Bruttoertrag")
+            fee = self._mining_float(self.mining_fee, "Poolgebühr", 0, 100)
+            uptime = self._mining_float(self.mining_uptime, "Nutzungszeit", 0, 100)
+        except ValueError as ex:
+            self.mining_calc_result.setText(str(ex))
+            return
+        gpu = estimate_economics(watts, rate, gross, uptime, fee)
+        btc = estimate_economics(watts, rate, 0.01, uptime, fee)
+        def eur(x): return f"{x:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+        self.mining_calc_result.setText(
+            f"GPU-Coin (dein Brutto-Schätzwert): Strom {eur(gpu['electricity_day'])}/Tag · "
+            f"Netto {eur(gpu['net_day'])}/Tag · {eur(gpu['net_month'])}/30 Tage · "
+            f"Break-even-Brutto {eur(gpu['break_even_gross_day'])}/Tag\n"
+            f"Bitcoin direkt per GPU (reiner Vergleichswert, 0,01 €/Tag Brutto angenommen): "
+            f"Netto {eur(btc['net_day'])}/Tag. Nicht als Ertragsprognose verstehen.")
+        self.mining_compare.setPlainText(
+            "1) GPU-minbarer Coin (Beispielwert, editierbar): " + eur(gpu['gross_day']) + " brutto/Tag, " +
+            eur(gpu['electricity_day']) + " Strom/Tag, " + eur(gpu['net_day']) + " netto/Tag\n" +
+            "2) Bitcoin direkt mit GPU (illustrativer Brutto-Platzhalter): " + eur(btc['gross_day']) +
+            " brutto/Tag, " + eur(btc['electricity_day']) + " Strom/Tag, " + eur(btc['net_day']) + " netto/Tag\n" +
+            "3) Nicht minen: 0 € Mining-Ertrag und 0 € zusätzlicher Mining-Strom.\n\n" +
+            "Hinweis: Ein GPU-Miner kann weitere Coins/Algorithmen unterstützen; tatsächliche Erträge, Wechselkurs, Pool-Mindestzahlung, Gebühren und PC-Grundverbrauch fehlen in dieser Modellrechnung.")
+
+    def _mining_choose_exe(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Miner-Programm auswählen", "", "Windows-Programme (*.exe)")
+        if path:
+            self.mining_exe.setText(path)
+            self._mining_save_settings()
+
+    def _mining_start(self):
+        if self.miner.running:
+            self.mining_process_status.setText("Mining läuft bereits.")
+            return
+        path = self.mining_exe.text().strip()
+        args_text = self.mining_args.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Miner fehlt", "Bitte zuerst eine vertrauenswürdige Miner-EXE auswählen. YAVIS installiert keine Mining-Software.")
+            return
+        telemetry = read_nvidia_metrics()
+        if not telemetry.get("available"):
+            QMessageBox.warning(self, "GPU-Überwachung nicht verfügbar",
+                "Mining wird aus Sicherheitsgründen nicht gestartet, weil nvidia-smi keine GPU-Telemetrie liefert. Prüfe NVIDIA-Treiber und nvidia-smi, damit Temperatur und Verbrauch überwacht werden können.")
+            return
+        current_temp = telemetry.get("temperature_c")
+        if current_temp is not None and current_temp >= 83:
+            QMessageBox.warning(self, "GPU zu warm", f"GPU-Temperatur aktuell {current_temp:.0f} °C. Erst abkühlen lassen; Start ist ab 83 °C gesperrt.")
+            return
+        if not QMessageBox.question(self, "Mining wirklich starten?",
+            "Der ausgewählte externe Miner wird gestartet und kann GPU/CPU stark belasten. Pool, Algorithmus und Wallet-Worker müssen korrekt sein. Fortfahren?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            return
+        try:
+            args = shlex.split(args_text, posix=True) if args_text else []
+            self._mining_save_settings()
+            self.miner.start(path, args, self.mining_log_path)
+            self.mining_process_status.setText("Mining-Prozess gestartet. Status und Temperatur werden überwacht.")
+        except Exception as ex:
+            self.mining_process_status.setText("Start fehlgeschlagen: " + str(ex)[:220])
+
+    def _mining_stop(self):
+        try:
+            self.miner.stop()
+            self.mining_process_status.setText("Mining wurde gestoppt.")
+        except Exception as ex:
+            self.mining_process_status.setText("Stopp-Fehler: " + str(ex)[:180])
+
+    def _mining_poll(self):
+        if not hasattr(self, "mining_gpu_status"):
+            return
+        metrics = read_nvidia_metrics()
+        if metrics["available"]:
+            temp = metrics.get("temperature_c")
+            power = metrics.get("power_w")
+            util = metrics.get("utilization_percent")
+            self.mining_gpu_status.setText(
+                f"{metrics['name']} · Temperatur: {temp if temp is not None else 'n. v.'} °C · "
+                f"Leistung: {power if power is not None else 'n. v.'} W · Auslastung: {util if util is not None else 'n. v.'} %")
+            if temp is not None and temp >= 83:
+                self.mining_temp_status.setText(f"WARNUNG: GPU bei {temp:.0f} °C. Temperatur und Kühlung prüfen.")
+            else:
+                self.mining_temp_status.setText("Temperaturschutz: Warnung ab 83 °C · automatischer Stopp ab 87 °C")
+            if temp is not None and temp >= 87 and self.miner.running:
+                self.miner.stop()
+                self.mining_process_status.setText(f"Automatisch gestoppt: GPU-Temperatur {temp:.0f} °C (Grenze 87 °C).")
+        else:
+            self.mining_gpu_status.setText("GPU-Telemetrie nicht verfügbar. Installiere/prüfe den NVIDIA-Treiber und nvidia-smi. " + metrics['error'][:150])
+        if self.miner.running:
+            elapsed = int(__import__('time').time() - (self.miner.started_at or __import__('time').time()))
+            self.mining_process_status.setText(f"Mining läuft · Laufzeit {elapsed // 3600:02d}:{(elapsed % 3600) // 60:02d}:{elapsed % 60:02d} · Protokoll: {self.mining_log_path}")
+        elif hasattr(self, "mining_process_status") and "Automatisch gestoppt" not in self.mining_process_status.text():
+            if self.miner.process is not None:
+                self.mining_process_status.setText(f"Mining-Prozess beendet (Exit-Code {self.miner.process.returncode}).")
+            else:
+                self.mining_process_status.setText("Mining ist gestoppt.")
+
     # ---------- Theme ----------
     def apply_theme(self):
         t, fs = self.s.get("theme"), int(self.s.get("font_size"))
@@ -1664,6 +1780,10 @@ class MainWindow(QMainWindow):
 
     def _quit(self):
         self._quitting = True
+        try:
+            self.miner.close()
+        except Exception:
+            pass
         self.a.music.stop()
         self.a.speaker.stop()
         if self.a.listener:
@@ -1671,6 +1791,10 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def closeEvent(self, e):
+        try:
+            self.miner.close()
+        except Exception:
+            pass
         if self._quitting or not self.tray.isVisible():
             e.accept()
         else:
